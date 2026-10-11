@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🐞 Bug Hunter - Playable Scratch Edition</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    header h1 {
+      font-size: 26px;
+      color: #58a6ff;
+      letter-spacing: 1px;
+    }
+    header p {
+      font-size: 13px;
+      color: #8b949e;
+    }
+    #game-container {
+      position: relative;
+      width: 720px;
+      height: 540px;
+      background: #000;
+      border: 3px solid #30363d;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), 0 0 20px rgba(88, 166, 255, 0.2);
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    /* Boss question modal overlay */
+    #boss-dialog {
+      position: absolute;
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 85%;
+      background: rgba(13, 17, 23, 0.95);
+      border: 2px solid #f85149;
+      box-shadow: 0 0 15px rgba(248, 81, 73, 0.5);
+      border-radius: 8px;
+      padding: 14px 20px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 20;
+    }
+    #boss-question {
+      font-size: 16px;
+      color: #f0f6fc;
+      font-weight: bold;
+    }
+    .boss-input-row {
+      display: flex;
+      gap: 10px;
+    }
+    #boss-input {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+      background: #161b22;
+      color: #58a6ff;
+      font-size: 15px;
+      font-family: monospace;
+      outline: none;
+    }
+    #boss-input:focus {
+      border-color: #58a6ff;
+    }
+    #boss-submit {
+      padding: 8px 18px;
+      background: #238636;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #boss-submit:hover {
+      background: #2ea043;
+    }
+    .footer-bar {
+      margin-top: 14px;
+      display: flex;
+      gap: 20px;
+      font-size: 13px;
+      color: #8b949e;
+    }
+    .key-badge {
+      display: inline-block;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 2px 6px;
+      color: #f0f6fc;
+      font-weight: bold;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🐞 Bug Hunter (Final Running Game)</h1>
+    <p>Exact Scratch 3.0 Architecture: 7 Sprites • 4 Levels • The Memory Leak Boss</p>
+  </header>
+
+  <div id="game-container">
+    <canvas id="scratchCanvas" width="720" height="540"></canvas>
+    
+    <div id="boss-dialog">
+      <div id="boss-question">Question Loading...</div>
+      <div class="boss-input-row">
+        <input type="text" id="boss-input" placeholder="Type fix answer here (e.g. loop, if, variable)..." autocomplete="off" />
+        <button id="boss-submit">PATCH BUG</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <div><span class="key-badge">◀</span> <span class="key-badge">▶</span> Move Debugger</div>
+    <div><span class="key-badge">SPACE</span> Fire Bug Fixes</div>
+    <div><span class="key-badge">☕</span> Speed Boost & Stability</div>
+    <div>Audio: <b>Synthesized 8-Bit</b></div>
+  </div>
+
+  <script>
+    // --- Scratch Canvas Architecture (480x360 scaled to 720x540) ---
+    const canvas = document.getElementById('scratchCanvas');
+    const ctx = canvas.getContext('2d');
+    const bossDialog = document.getElementById('boss-dialog');
+    const bossQuestionEl = document.getElementById('boss-question');
+    const bossInputEl = document.getElementById('boss-input');
+    const bossSubmitEl = document.getElementById('boss-submit');
+
+    // Scratch coordinate mapping (-240 to 240 X, -180 to 180 Y)
+    function toCanvasX(sx) {
+      return (sx + 240) * (canvas.width / 480);
+    }
+    function toCanvasY(sy) {
+      return (180 - sy) * (canvas.height / 360);
+    }
+    function scaleVal(v) {
+      return v * (canvas.width / 480);
+    }
+
+    // --- Web Audio Synthesizer (Zero Dependencies) ---
+    const AudioEngine = {
+      ctx: null,
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      },
+      playPop() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(400, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(900, this.ctx.currentTime + 0.08);
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.08);
+      },
+      playHit() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(180, this.ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.2);
+        gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.2);
+      },
+      playLevelUp() {
+        if (!this.ctx) return;
+        const notes = [261.63, 329.63, 392.00, 523.25];
+        notes.forEach((freq, i) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.type = 'triangle';
+          osc.frequency.value = freq;
+          const t = this.ctx.currentTime + i * 0.07;
+          gain.gain.setValueAtTime(0.2, t);
+          gain.gain.linearRampToValueAtTime(0.01, t + 0.1);
+          osc.start(t);
+          osc.stop(t + 0.1);
+        });
+      },
+      playCorrect() {
+        if (!this.ctx) return;
+        [523.25, 659.25, 783.99].forEach((f, i) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.type = 'sine';
+          osc.frequency.value = f;
+          const t = this.ctx.currentTime + i * 0.08;
+          gain.gain.setValueAtTime(0.3, t);
+          gain.gain.linearRampToValueAtTime(0.01, t + 0.15);
+          osc.start(t);
+          osc.stop(t + 0.15);
+        });
+      },
+      playWrong() {
+        if (!this.ctx) return;
+        [150, 130].forEach((f, i) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.type = 'square';
+          osc.frequency.value = f;
+          const t = this.ctx.currentTime + i * 0.12;
+          gain.gain.setValueAtTime(0.2, t);
+          gain.gain.linearRampToValueAtTime(0.01, t + 0.15);
+          osc.start(t);
+          osc.stop(t + 0.15);
+        });
+      }
+    };
+
+    // --- State & Variables (Exact Scratch Specification) ---
+    let score = 0;
+    let stability = 100;
+    let level = 1;
+    let bug_speed = 2;
+    let player_speed = 8;
+    let high_score = 0;
+    let playing = 0; // 0 = not playing, 1 = playing
+    let current_backdrop = 'Title'; // 'Title', 'Level 1', 'Level 2', 'Level 3', 'Level 4', 'Game Over', 'Build Successful'
+
+    // Boss State
+    let boss_hp = 5;
+    let q_index = 0;
+    let boss_active = false;
+    let boss_leak_timer = 0;
+
+    // Trivia Data
+    const Questions = [
+      "Which structure repeats code?",
+      "Which statement makes decisions? (if / for)",
+      "What do we call a named block of reusable code?",
+      "What is a mistake in code called?",
+      "What stores a value that can change?"
+    ];
+    const Answers = [
+      "loop",
+      "if",
+      "function",
+      "bug",
+      "variable"
+    ];
+
+    // Entities
+    const player = {
+      x: 0,
+      y: -140,
+      width: 38,
+      height: 48,
+      lastShotTime: 0
+    };
+
+    let bullets = [];
+    let bugs = [];
+    let coffee = null;
+    let bugSpawnTimer = 0;
+    let coffeeSpawnTimer = 0;
+
+    // Keyboard state
+    const keys = {};
+    window.addEventListener('keydown', (e) => {
+      keys[e.code] = true;
+      if (e.code === 'Space' && playing === 1 && !bossDialog.contains(document.activeElement)) {
+        fireBullet();
+        e.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+    });
+
+    // --- Scratch Messages / Broadcasts ---
+    function broadcastSetup() {
+      score = 0;
+      stability = 100;
+      level = 1;
+      bug_speed = 2;
+      player_speed = 8;
+      playing = 1;
+      current_backdrop = 'Level 1';
+      boss_active = false;
+      bossDialog.style.display = 'none';
+      bullets = [];
+      bugs = [];
+      coffee = null;
+      player.x = 0;
+      player.y = -140;
+    }
+
+    function broadcastStartGame() {
+      // Ready loops
+      bugSpawnTimer = Date.now();
+      coffeeSpawnTimer = Date.now() + 12000;
+      AudioEngine.playLevelUp();
+    }
+
+    function broadcastBoss() {
+      boss_active = true;
+      boss_hp = 5;
+      q_index = 0;
+      current_backdrop = 'Level 4';
+      bugs = []; // stop bugs during boss
+      boss_leak_timer = Date.now();
+      promptNextQuestion();
+      AudioEngine.playLevelUp();
+    }
+
+    function broadcastGameOver() {
+      playing = 0;
+      boss_active = false;
+      bossDialog.style.display = 'none';
+      current_backdrop = 'Game Over';
+      if (score > high_score) high_score = score;
+      AudioEngine.playHit();
+    }
+
+    function broadcastWin() {
+      playing = 0;
+      boss_active = false;
+      bossDialog.style.display = 'none';
+      current_backdrop = 'Build Successful';
+      if (score > high_score) high_score = score;
+      AudioEngine.playLevelUp();
+    }
+
+    function promptNextQuestion() {
+      bossDialog.style.display = 'flex';
+      bossQuestionEl.textContent = `[LEAK ALERT]: ${Questions[q_index]}`;
+      bossInputEl.value = '';
+      bossInputEl.focus();
+    }
+
+    function checkAnswer() {
+      const userAns = bossInputEl.value.trim().toLowerCase();
+      const correctAns = Answers[q_index].toLowerCase();
+
+      if (userAns === correctAns) {
+        boss_hp -= 1;
+        score += 50;
+        AudioEngine.playCorrect();
+      } else {
+        stability -= 20;
+        AudioEngine.playWrong();
+      }
+
+      q_index += 1;
+      if (q_index >= Questions.length) {
+        q_index = 0;
+      }
+
+      if (boss_hp <= 0) {
+        broadcastWin();
+      } else if (stability <= 0) {
+        broadcastGameOver();
+      } else {
+        promptNextQuestion();
+      }
+    }
+
+    bossSubmitEl.addEventListener('click', checkAnswer);
+    bossInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') checkAnswer();
+    });
+
+    // --- Player Actions ---
+    function fireBullet() {
+      const now = Date.now();
+      if (now - player.lastShotTime >= 250) { // 0.25 second cooldown
+        bullets.push({
+          x: player.x,
+          y: player.y + 30
+        });
+        player.lastShotTime = now;
+        AudioEngine.playPop();
+      }
+    }
+
+    // --- Start Button Click Handler ---
+    canvas.addEventListener('click', (e) => {
+      AudioEngine.init();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Start Button bounding box in Title / Game Over / Win
+      if (playing === 0) {
+        const btnX = toCanvasX(0);
+        const btnY = toCanvasY(-40);
+        const btnW = scaleVal(160);
+        const btnH = scaleVal(50);
+
+        if (
+          mouseX >= btnX - btnW / 2 &&
+          mouseX <= btnX + btnW / 2 &&
+          mouseY >= btnY - btnH / 2 &&
+          mouseY <= btnY + btnH / 2
+        ) {
+          broadcastSetup();
+          broadcastStartGame();
+        }
+      }
+    });
+
+    // --- Main Game Update Loop ---
+    function update() {
+      if (playing === 1) {
+        // Player Movement
+        if (keys['ArrowRight'] || keys['KeyD']) {
+          player.x += player_speed;
+          if (player.x > 210) player.x = 210;
+        }
+        if (keys['ArrowLeft'] || keys['KeyA']) {
+          player.x -= player_speed;
+          if (player.x < -210) player.x = -210;
+        }
+
+        // Bullets update
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          bullets[i].y += 14;
+          if (bullets[i].y > 170) {
+            bullets.splice(i, 1);
+          }
+        }
+
+        // Spawning Bugs (if not boss fight)
+        if (!boss_active && level < 4) {
+          const now = Date.now();
+          const spawnInterval = Math.max(700, (2.2 - level * 0.4) * 1000);
+          if (now - bugSpawnTimer > spawnInterval) {
+            bugs.push({
+              x: Math.floor(Math.random() * 400) - 200,
+              y: 170,
+              costume: Math.floor(Math.random() * 3) + 1, // 1: Red, 2: Green, 3: Purple
+              size: 26
+            });
+            bugSpawnTimer = now;
+          }
+        }
+
+        // Bugs update & collisions
+        for (let i = bugs.length - 1; i >= 0; i--) {
+          const bug = bugs[i];
+          bug.y -= bug_speed;
+
+          let bugRemoved = false;
+
+          // Check collision with bullets
+          for (let j = bullets.length - 1; j >= 0; j--) {
+            const b = bullets[j];
+            if (Math.abs(bug.x - b.x) < 22 && Math.abs(bug.y - b.y) < 22) {
+              score += 10;
+              AudioEngine.playPop();
+              bullets.splice(j, 1);
+              bugs.splice(i, 1);
+              bugRemoved = true;
+              break;
+            }
+          }
+
+          if (bugRemoved) continue;
+
+          // Check collision with player
+          if (Math.abs(bug.x - player.x) < 28 && Math.abs(bug.y - player.y) < 28) {
+            stability -= 10;
+            AudioEngine.playHit();
+            bugs.splice(i, 1);
+            continue;
+          }
+
+          // Offscreen boundary check
+          if (bug.y < -160) {
+            stability -= 5;
+            bugs.splice(i, 1);
+          }
+        }
+
+        // Coffee Power-up Spawner
+        const now = Date.now();
+        if (!coffee && now > coffeeSpawnTimer) {
+          coffee = {
+            x: Math.floor(Math.random() * 400) - 200,
+            y: 170
+          };
+        }
+
+        // Coffee update
+        if (coffee) {
+          coffee.y -= 3;
+          if (Math.abs(coffee.x - player.x) < 30 && Math.abs(coffee.y - player.y) < 30) {
+            stability = Math.min(100, stability + 10);
+            player_speed = 14;
+            AudioEngine.playLevelUp();
+            setTimeout(() => {
+              player_speed = 8;
+            }, 5000);
+            coffee = null;
+            coffeeSpawnTimer = Date.now() + 15000;
+          } else if (coffee.y < -160) {
+            coffee = null;
+            coffeeSpawnTimer = Date.now() + 15000;
+          }
+        }
+
+        // Level Manager Logic
+        if (!boss_active && score > (level * 100 - 1)) {
+          level += 1;
+          bug_speed += 1;
+          current_backdrop = `Level ${level}`;
+          AudioEngine.playLevelUp();
+
+          if (level === 4) {
+            broadcastBoss();
+          }
+        }
+
+        // Boss Memory Leak Drain (every 4 seconds, -5 stability)
+        if (boss_active) {
+          if (now - boss_leak_timer >= 4000) {
+            stability -= 5;
+            boss_leak_timer = now;
+          }
+        }
+
+        // Stability Check
+        if (stability <= 0) {
+          broadcastGameOver();
+        }
+      }
+    }
+
+    // --- Render Functions (Scratch Aesthetics) ---
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Backdrops
+      drawBackdrop();
+
+      if (playing === 1) {
+        // Draw Coffee Powerup
+        if (coffee) drawCoffee(coffee.x, coffee.y);
+
+        // Draw Bullets
+        bullets.forEach(b => drawBullet(b.x, b.y));
+
+        // Draw Bugs
+        bugs.forEach(bug => drawBug(bug.x, bug.y, bug.costume));
+
+        // Draw Boss
+        if (boss_active) drawBoss();
+
+        // Draw Player
+        drawPlayer(player.x, player.y);
+      }
+
+      // Draw Scratch Variable Monitors (Top Bar)
+      drawMonitors();
+
+      // Draw Buttons / Overlay texts for Non-playing states
+      if (playing === 0) {
+        drawOverlayScreen();
+      }
+    }
+
+    function drawBackdrop() {
+      let grad;
+      if (current_backdrop === 'Title') {
+        grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#0a0e17');
+        grad.addColorStop(1, '#020408');
+      } else if (current_backdrop === 'Level 1') {
+        grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#0d2818');
+        grad.addColorStop(1, '#040d08');
+      } else if (current_backdrop === 'Level 2') {
+        grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#0c2340');
+        grad.addColorStop(1, '#05101c');
+      } else if (current_backdrop === 'Level 3') {
+        grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#2c103e');
+        grad.addColorStop(1, '#13051b');
+      } else if (current_backdrop === 'Level 4') {
+        grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#420b11');
+        grad.addColorStop(1, '#190306');
+      } else if (current_backdrop === 'Game Over') {
+        grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#3a080c');
+        grad.addColorStop(1, '#110204');
+      } else if (current_backdrop === 'Build Successful') {
+        grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, '#0f381e');
+        grad.addColorStop(1, '#03140a');
+      }
+
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Subtle cyber grid
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 36) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += 36) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+      }
+    }
+
+    function drawPlayer(sx, sy) {
+      const cx = toCanvasX(sx);
+      const cy = toCanvasY(sy);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      // Robot Body
+      ctx.fillStyle = '#58a6ff';
+      ctx.fillRect(-18, -18, 36, 36);
+      ctx.strokeStyle = '#f0f6fc';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-18, -18, 36, 36);
+
+      // Visor
+      ctx.fillStyle = '#39d353';
+      ctx.fillRect(-12, -10, 24, 10);
+
+      // Antenna
+      ctx.beginPath();
+      ctx.moveTo(0, -18);
+      ctx.lineTo(0, -28);
+      ctx.strokeStyle = '#f0f6fc';
+      ctx.stroke();
+      ctx.fillStyle = '#ff7b72';
+      ctx.beginPath();
+      ctx.arc(0, -30, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Treads / Base
+      ctx.fillStyle = '#30363d';
+      ctx.fillRect(-22, 18, 44, 10);
+
+      ctx.restore();
+    }
+
+    function drawBullet(sx, sy) {
+      const cx = toCanvasX(sx);
+      const cy = toCanvasY(sy);
+
+      ctx.save();
+      ctx.fillStyle = '#39d353';
+      ctx.shadowColor = '#39d353';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Checkmark icon ✔
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText('✔', cx - 4, cy + 3);
+      ctx.restore();
+    }
+
+    function drawBug(sx, sy, costume) {
+      const cx = toCanvasX(sx);
+      const cy = toCanvasY(sy);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      let bugColor = '#ff7b72'; // 1: Red Beetle
+      if (costume === 2) bugColor = '#3fb950'; // 2: Green Bug
+      if (costume === 3) bugColor = '#d2a8ff'; // 3: Purple Bug
+
+      // Bug Body
+      ctx.fillStyle = bugColor;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 16, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Eyes
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-8, 5, 4, 4);
+      ctx.fillRect(4, 5, 4, 4);
+
+      // Legs
+      ctx.strokeStyle = bugColor;
+      ctx.lineWidth = 2;
+      [-10, 0, 10].forEach(lx => {
+        ctx.beginPath();
+        ctx.moveTo(lx, -6);
+        ctx.lineTo(lx * 1.6, -14);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(lx, 6);
+        ctx.lineTo(lx * 1.6, 14);
+        ctx.stroke();
+      });
+
+      ctx.restore();
+    }
+
+    function drawCoffee(sx, sy) {
+      const cx = toCanvasX(sx);
+      const cy = toCanvasY(sy);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.font = '24px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('☕', 0, 0);
+      ctx.restore();
+    }
+
+    function drawBoss() {
+      const cx = toCanvasX(0);
+      const cy = toCanvasY(90);
+      const scalePercent = ((boss_hp * 15) + 30) / 100;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(scalePercent, scalePercent);
+
+      // Glitch Aura
+      ctx.shadowColor = '#f85149';
+      ctx.shadowBlur = 25;
+
+      // Monster Body
+      ctx.fillStyle = '#8957e5';
+      ctx.beginPath();
+      ctx.arc(0, 0, 60, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#f85149';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      // Scary Red Eyes
+      ctx.fillStyle = '#ff7b72';
+      ctx.beginPath();
+      ctx.arc(-22, -10, 12, 0, Math.PI * 2);
+      ctx.arc(22, -10, 12, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Pupils
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.arc(-22, -10, 5, 0, Math.PI * 2);
+      ctx.arc(22, -10, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Sharp Teeth
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(-30, 20);
+      ctx.lineTo(-20, 35);
+      ctx.lineTo(-10, 20);
+      ctx.lineTo(0, 35);
+      ctx.lineTo(10, 20);
+      ctx.lineTo(20, 35);
+      ctx.lineTo(30, 20);
+      ctx.fill();
+
+      // Name & HP Tag
+      ctx.restore();
+      ctx.fillStyle = '#ff7b72';
+      ctx.font = 'bold 15px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`BOSS: MEMORY LEAK (HP: ${boss_hp}/5)`, cx, cy - 75 * scalePercent);
+    }
+
+    function drawMonitors() {
+      // Scratch Variable Monitors Styling
+      const monitors = [
+        { label: 'SCORE', val: score, x: 20, y: 15, color: '#ff8c00' },
+        { label: 'STABILITY %', val: stability, x: 130, y: 15, color: stability > 30 ? '#39d353' : '#ff7b72' },
+        { label: 'LEVEL', val: level, x: 275, y: 15, color: '#58a6ff' },
+        { label: 'HIGH SCORE', val: high_score, x: 570, y: 15, color: '#bc8cff' }
+      ];
+
+      monitors.forEach(m => {
+        ctx.fillStyle = 'rgba(22, 27, 34, 0.85)';
+        ctx.strokeStyle = '#30363d';
+        ctx.lineWidth = 1;
+        ctx.fillRect(m.x, m.y, 105, 30);
+        ctx.strokeRect(m.x, m.y, 105, 30);
+
+        ctx.fillStyle = '#8b949e';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(m.label, m.x + 8, m.y + 14);
+
+        ctx.fillStyle = m.color;
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(m.val, m.x + 98, m.y + 24);
+      });
+    }
+
+    function drawOverlayScreen() {
+      const cx = toCanvasX(0);
+
+      if (current_backdrop === 'Title') {
+        ctx.fillStyle = '#58a6ff';
+        ctx.font = '900 36px "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('BUG HUNTER', cx, toCanvasY(70));
+
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '15px monospace';
+        ctx.fillText('Zero to Hero Debugger Simulation', cx, toCanvasY(40));
+
+        ctx.fillStyle = '#c9d1d9';
+        ctx.font = '13px monospace';
+        ctx.fillText('Controls: ◀ ▶ Move | SPACE: Fire Patches | ☕: Speed Boost', cx, toCanvasY(0));
+
+        drawButton('START DEBUGGING', '#238636');
+      } else if (current_backdrop === 'Game Over') {
+        ctx.fillStyle = '#f85149';
+        ctx.font = '900 36px "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('SEGMENTATION FAULT! 💥', cx, toCanvasY(60));
+
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '16px monospace';
+        ctx.fillText(`Final Score: ${score} | High Score: ${high_score}`, cx, toCanvasY(20));
+
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '12px monospace';
+        ctx.fillText('Credits: Built for Software Engineering Fundamentals', cx, toCanvasY(-100));
+
+        drawButton('RETRY BUILD', '#da3633');
+      } else if (current_backdrop === 'Build Successful') {
+        ctx.fillStyle = '#3fb950';
+        ctx.font = '900 36px "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('BUILD SUCCESSFUL ✅', cx, toCanvasY(60));
+
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '16px monospace';
+        ctx.fillText(`Memory Leak Patched! Final Score: ${score}`, cx, toCanvasY(20));
+
+        drawButton('PLAY AGAIN', '#238636');
+      }
+    }
+
+    function drawButton(text, bgCol) {
+      const btnX = toCanvasX(0);
+      const btnY = toCanvasY(-40);
+      const btnW = scaleVal(160);
+      const btnH = scaleVal(46);
+
+      ctx.save();
+      ctx.fillStyle = bgCol;
+      ctx.shadowColor = bgCol;
+      ctx.shadowBlur = 15;
+      ctx.beginPath();
+      ctx.roundRect(btnX - btnW / 2, btnY - btnH / 2, btnW, btnH, 8);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 15px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, btnX, btnY);
+      ctx.restore();
+    }
+
+    // --- Main Game Loop ---
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+    loop();
+  </script>
+</body>
+</html>
